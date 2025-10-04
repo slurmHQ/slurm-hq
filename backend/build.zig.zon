@@ -1,0 +1,24 @@
+.{
+    .name = .slurm_hq,
+    .version = "0.0.1",
+
+    .fingerprint = 0xf79ca60026df3f1f,
+
+    .minimum_zig_version = "0.15.1",
+
+    .dependencies = .{
+        .slurm = .{
+            .path = "vendor/slurm",
+        },
+        .tokamak = .{
+            .url = "git+https://github.com/cztomsik/tokamak?ref=main#d02271291aa058638e83ba988577beeb298f0ad0",
+            .hash = "tokamak-2.0.0-FbnSeSiIBgAAw-JgoTQ0PYervTy0FLSXFDGxN3G4EFAL",
+        },
+    },
+
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+    },
+}

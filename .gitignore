@@ -1,0 +1,3 @@
+backend/vendor/
+backend/zig-out
+backend/.zig-cache
