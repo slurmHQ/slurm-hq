@@ -27,7 +27,26 @@ fn getNodes(allocator: Allocator, name: ?[]const u8) ![]const u8 {
     return json.stringify(allocator, node_resp, .{ .whitespace = .indent_4 });
 }
 
-fn getJobs(allocator: Allocator, id: ?u32) ![]const u8 {
+fn getPartitions(allocator: Allocator, name: ?[]const u8) ![]const u8 {
+    const resp = try slurm.partition.load();
+    defer resp.deinit();
+
+    if (name) |n| {
+        var iter = resp.iter();
+        while (iter.next()) |part| {
+            const node_name = slurm.parseCStrZ(part.name);
+            if (node_name == null) continue;
+
+            if (std.mem.eql(u8, node_name.?, n)) {
+                return json.stringify(allocator, part, .{ .whitespace = .indent_4 });
+            }
+        }
+
+        // TODO: proper return
+        return "";
+    }
+    return json.stringify(allocator, resp, .{ .whitespace = .indent_4 });
+}
 
 const JobBriefInfo = struct {
     id: u32,
@@ -89,6 +108,7 @@ fn getQueueSummary(allocator: Allocator) ![]const u8 {
     return json.stringify(allocator, queue_summary.items, .{ .whitespace = .indent_4 });
 }
 
+fn getJobs(allocator: Allocator, id: ?u32) ![]const u8 {
     const data = try slurm.job.load();
 
     if (id) |job_id| {
@@ -124,4 +144,12 @@ pub fn @"GET /nodes"(allocator: std.mem.Allocator) ![]const u8 {
 
 pub fn @"GET /nodes/:name"(allocator: std.mem.Allocator, name: []const u8) ![]const u8 {
     return getNodes(allocator, name);
+}
+
+pub fn @"GET /partitions"(allocator: std.mem.Allocator) ![]const u8 {
+    return getPartitions(allocator, null);
+}
+
+pub fn @"GET /partitions/:name"(allocator: std.mem.Allocator, name: []const u8) ![]const u8 {
+    return getPartitions(allocator, name);
 }
