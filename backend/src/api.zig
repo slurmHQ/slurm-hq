@@ -4,9 +4,7 @@ const json = @import("json.zig");
 const Allocator = std.mem.Allocator;
 
 fn getNodes(allocator: Allocator, name: ?[]const u8) ![]const u8 {
-    _ = slurm.init(null);
-
-    const node_resp = try slurm.loadNodes();
+    const node_resp = try slurm.node.load();
     defer node_resp.deinit();
 
     if (name) |n| {
@@ -30,6 +28,7 @@ fn getJobs(allocator: Allocator, id: ?u32) ![]const u8 {
     _ = slurm.init(null);
 
     const data = try slurm.loadJobs();
+    const data = try slurm.job.load();
 
     if (id) |job_id| {
         var iter = data.iter();
