@@ -8,11 +8,13 @@ const SlurmType = struct {
     typ: type,
     serialize_fn: *const fn (s: *Stringify, data: anytype, opts: SlurmType) anyerror!void = serializeContainer,
     options: []const Option = &.{},
+    extra_members: []const Option = &.{},
 
     /// Special serialization for selected fields.
     const Option = struct {
         name: [:0]const u8,
-        serialize_fn: *const fn (s: *Stringify, data: anytype, opts: anytype) anyerror!void,
+        new_name: ?[:0]const u8 = null,
+        serialize_fn: *const fn (s: *Stringify, instance: anytype, field: anytype, opts: anytype) anyerror!void = serializeMemberDefault,
         serialize_fn_args: ?*const anyopaque = null,
     };
 };
@@ -21,6 +23,13 @@ const SlurmType = struct {
 fn noop(s: *Stringify, data: anytype, opts: anytype) !void {
     _ = s;
     _ = data;
+    _ = opts;
+}
+
+fn noopMember(s: *Stringify, instance: anytype, field: anytype, opts: anytype) !void {
+    _ = s;
+    _ = instance;
+    _ = field;
     _ = opts;
 }
 
@@ -33,7 +42,6 @@ const tdefs: []const SlurmType = &.{
     .{
         .typ = *slurm.Node,
         .options = &.{
-            .{ .name = "free_mem", .serialize_fn = toNumber },
             .{ .name = "tres_fmt_str", .serialize_fn = toDict },
             .{ .name = "partitions", .serialize_fn = toArray },
             .{ .name = "features_act", .serialize_fn = toArray },
@@ -43,16 +51,40 @@ const tdefs: []const SlurmType = &.{
     .{
         .typ = *slurm.Job,
         .options = &.{
-            .{ .name = "node_inx", .serialize_fn = noop },
-            .{ .name = "priority_array", .serialize_fn = noop },
-            .{ .name = "req_node_inx", .serialize_fn = noop },
-            .{ .name = "exc_node_inx", .serialize_fn = noop },
-            .{ .name = "array_bitmap", .serialize_fn = noop },
+            .{ .name = "pn_min_memory", .new_name = "memory", .serialize_fn = parseJobMemory },
+            .{ .name = "node_inx", .serialize_fn = noopMember },
+            .{ .name = "priority_array", .serialize_fn = noopMember },
+            .{ .name = "req_node_inx", .serialize_fn = noopMember },
+            .{ .name = "exc_node_inx", .serialize_fn = noopMember },
+            .{ .name = "array_bitmap", .serialize_fn = noopMember },
             .{ .name = "tres_req_str", .serialize_fn = toDict },
             .{ .name = "tres_alloc_str", .serialize_fn = toDict },
             .{ .name = "tres_per_job", .serialize_fn = toDict },
+            .{ .name = "requeue", .serialize_fn = toBool },
             .{ .name = "time_min", .serialize_fn = toNumber, .serialize_fn_args = &NumberOptions{ .zero_is_noval = true } },
         },
+        .extra_members = &.{
+            .{ .name = "memory_total", .serialize_fn = parseJobMemoryTotal },
+        },
+    },
+    .{
+        .typ = *slurm.Partition,
+        .options = &.{
+            .{ .name = "node_inx", .serialize_fn = noopMember },
+            .{ .name = "job_defaults_list", .serialize_fn = noopMember },
+            .{ .name = "deny_accounts", .serialize_fn = toArray, },
+            .{ .name = "allow_accounts", .serialize_fn = toArray, },
+            .{ .name = "allow_alloc_nodes", .serialize_fn = toArray, },
+            .{ .name = "allow_groups", .serialize_fn = toArray, },
+            .{ .name = "allow_qos", .serialize_fn = toArray, },
+            .{ .name = "deny_qos", .serialize_fn = toArray, },
+            .{ .name = "qos_char", .new_name = "assigned_qos" },
+            .{ .name = "tres_fmt_str", .new_name = "configured_tres", .serialize_fn = toDict },
+        },
+    },
+    .{
+        .typ = *slurm.Partition.LoadResponse,
+        .serialize_fn = stringifyLoadResponse,
     },
     .{
         .typ = *slurm.Node.LoadResponse,
@@ -72,12 +104,44 @@ pub fn fmt(value: anytype, options: Stringify.Options) Formatter(@TypeOf(value))
     return Formatter(@TypeOf(value)){ .value = value, .options = options };
 }
 
+pub fn parseJobMemory(s: *Stringify, instance: anytype, field: anytype, opts: anytype) !void {
+    const value = instance.memory();
+    try s.objectField(field.json_key);
+    try toNumberRaw(s, value, opts);
+}
+
+pub fn parseJobMemoryTotal(s: *Stringify, instance: anytype, field: anytype, opts: anytype) !void {
+    const value = instance.memoryTotal();
+    try s.objectField(field.json_key);
+    try toNumberRaw(s, value, opts);
+}
+
+pub fn serializeMemberDefault(s: *Stringify, instance: anytype, field: anytype, opts: anytype) !void {
+    _ = opts;
+
+    const value = @field(instance, field.name);
+
+    switch (@typeInfo(field.type)) {
+        .int => |info| {
+            switch (info.signedness) {
+                .unsigned => {
+                    try toNumber(s, instance, field, null);
+                    return;
+                },
+                .signed => {},
+            }
+        },
+        else => {},
+    }
+    try write(s, value, field.json_key);
+}
+
 const DictOptions = struct {
     sep1: u8 = ',',
     sep2: u8 = '=',
 };
 
-pub fn toDict(s: *Stringify, data: anytype, opts: anytype) !void {
+pub fn toDict(s: *Stringify, instance: anytype, field: anytype, opts: anytype) !void {
     const options: *const DictOptions = blk: {
         if (opts == null) {
             break :blk &.{};
@@ -86,7 +150,10 @@ pub fn toDict(s: *Stringify, data: anytype, opts: anytype) !void {
         }
     };
 
-    const buf = slurm.parseCStrZ(data) orelse {
+    const value = @field(instance, field.name);
+    try s.objectField(field.json_key);
+
+    const buf = slurm.parseCStrZ(value) orelse {
         try s.print("{{}}", .{});
         return;
     };
@@ -96,10 +163,10 @@ pub fn toDict(s: *Stringify, data: anytype, opts: anytype) !void {
     while (it_outer.next()) |item| {
         var it_inner = std.mem.splitScalar(u8, item, options.sep2);
         const key = it_inner.first();
-        const value = it_inner.rest();
+        const val = it_inner.rest();
 
         try s.objectField(key);
-        try s.write(value);
+        try s.write(val);
     }
     try s.endObject();
 }
@@ -108,7 +175,7 @@ const ArrayOptions = struct {
     sep: u8 = ',',
 };
 
-pub fn toArray(s: *Stringify, data: anytype, opts: anytype) !void {
+pub fn toArray(s: *Stringify, instance: anytype, field: anytype, opts: anytype) !void {
     const options: *const ArrayOptions = blk: {
         if (opts == null) {
             break :blk &.{};
@@ -117,7 +184,10 @@ pub fn toArray(s: *Stringify, data: anytype, opts: anytype) !void {
         }
     };
 
-    const buf = slurm.parseCStrZ(data) orelse {
+    const value = @field(instance, field.name);
+    try s.objectField(field.json_key);
+
+    const buf = slurm.parseCStrZ(value) orelse {
         try s.print("[]", .{});
         return;
     };
@@ -139,9 +209,10 @@ fn Number(comptime T: type) type {
 
 pub const NumberOptions = struct {
     zero_is_noval: bool = false,
+    flat: bool = false,
 };
 
-pub fn toNumber(s: *Stringify, data: anytype, opts: anytype) !void {
+pub fn toNumberRaw(s: *Stringify, data: anytype, opts: anytype) !void {
     const T = @TypeOf(data);
     const raw_number = @as(T, data);
 
@@ -151,7 +222,7 @@ pub fn toNumber(s: *Stringify, data: anytype, opts: anytype) !void {
     };
 
     const value: ?T = blk: {
-        const has_value = slurm.uint.has_value(data);
+        const has_value = slurm.common.numberHasValue(data);
 
         if ((options.zero_is_noval and raw_number == 0) or !has_value) {
             break :blk null;
@@ -160,19 +231,30 @@ pub fn toNumber(s: *Stringify, data: anytype, opts: anytype) !void {
         }
     };
 
-    const num: Number(T) = .{
-        .value = value,
-        .infinite = slurm.uint.is_infinite(data),
-    };
+    switch (options.flat) {
+        false => try s.write(Number(T){
+            .value = value,
+            .infinite = slurm.common.numberIsInfinite(data),
+        }),
+        true => try s.write(value),
+    }
+}
 
-    try s.write(num);
+pub fn toNumber(s: *Stringify, instance: anytype, field: anytype, opts: anytype) !void {
+    const field_value = @field(instance, field.name);
+    try s.objectField(field.json_key);
+    try toNumberRaw(s, field_value, opts);
+}
+
+pub fn toBool(s: *Stringify, instance: anytype, field: anytype, opts: anytype) !void {
+    _ = opts;
+    const field_value = @field(instance, field.name);
+    try s.objectField(field.json_key);
+    if (field_value == 0) try s.write(false) else try s.write(true);
 }
 
 pub fn stringifyLoadResponse(s: *Stringify, data: anytype, opts: SlurmType) !void {
     _ = opts;
-
-    try s.beginObject();
-    try s.objectField("data");
 
     try s.beginArray();
     var iter = data.iter();
@@ -180,9 +262,13 @@ pub fn stringifyLoadResponse(s: *Stringify, data: anytype, opts: SlurmType) !voi
         try write(s, item, null);
     }
     try s.endArray();
-
-    try s.endObject();
 }
+
+pub const Field = struct {
+    json_key: [:0]const u8,
+    name: [:0]const u8,
+    @"type": type,
+};
 
 fn serializeContainer(s: *Stringify, data: anytype, typ: SlurmType) !void {
     std.debug.assert(typ.typ != @TypeOf(undefined));
@@ -192,23 +278,32 @@ fn serializeContainer(s: *Stringify, data: anytype, typ: SlurmType) !void {
     const T = @TypeOf(data.*);
     const fields = @typeInfo(T).@"struct".fields;
     inline for (fields) |field| {
-        const field_option: ?SlurmType.Option = comptime blk: {
+        const option: SlurmType.Option = comptime blk: {
             @setEvalBranchQuota(5000);
             for (typ.options) |opt| {
                 if (mem.eql(u8, field.name, opt.name)) break :blk opt;
             }
 
-            break :blk null;
+            break :blk .{
+                .name = field.name,
+            };
         };
 
-        const field_value = @field(data, field.name);
-        if (field_option) |option| {
-            if (option.serialize_fn != noop) try s.objectField(field.name);
-            try option.serialize_fn(s, field_value, option.serialize_fn_args);
-        } else {
-            //            try s.objectField(field.name);
-            try write(s, field_value, field.name);
-        }
+        const f: Field = .{
+            .json_key = if (option.new_name) |new_name| new_name else field.name,
+            .name = field.name,
+            .@"type" = field.type,
+        };
+        try option.serialize_fn(s, data, f, option.serialize_fn_args);
+    }
+
+    inline for (typ.extra_members) |extra_member| {
+        const f: Field = .{
+            .json_key = extra_member.name,
+            .name = extra_member.name,
+            .@"type" = undefined,
+        };
+        try extra_member.serialize_fn(s, data, f, extra_member.serialize_fn_args);
     }
 
     try s.endObject();
@@ -240,7 +335,10 @@ pub fn write(s: *Stringify, value: anytype, key: ?[]const u8) std.Io.Writer.Erro
 
 pub fn serialize(value: anytype, options: Stringify.Options, writer: *std.Io.Writer) !void {
     var s: Stringify = .{ .writer = writer, .options = options };
+    try s.beginObject();
+    try s.objectField("data");
     try write(&s, value, null);
+    try s.endObject();
 }
 
 pub fn stringify(allocator: mem.Allocator, value: anytype, options: Stringify.Options) ![]const u8 {
