@@ -138,11 +138,18 @@ pub fn @"GET /jobs/:id"(allocator: std.mem.Allocator, id: u32) ![]const u8 {
     return getJobs(allocator, id);
 }
 
-pub fn @"GET /nodes"(allocator: std.mem.Allocator) ![]const u8 {
+pub fn @"GET /jobs/:id/script"(allocator: std.mem.Allocator, res: *tk.Response, id: u32) ![]const u8 {
+    res.content_type = .TEXT;
+    return slurm.job.getBatchScript(allocator, id);
+}
+
+pub fn @"GET /nodes"(allocator: std.mem.Allocator, res: *tk.Response) ![]const u8 {
+    res.content_type = .JSON;
     return getNodes(allocator, null);
 }
 
-pub fn @"GET /nodes/:name"(allocator: std.mem.Allocator, name: []const u8) ![]const u8 {
+pub fn @"GET /nodes/:name"(allocator: std.mem.Allocator, res: *tk.Response, name: []const u8) ![]const u8 {
+    _ = res;
     return getNodes(allocator, name);
 }
 
