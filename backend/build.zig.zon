@@ -11,8 +11,8 @@
             .path = "vendor/slurm",
         },
         .tokamak = .{
-            .url = "git+https://github.com/cztomsik/tokamak?ref=main#d02271291aa058638e83ba988577beeb298f0ad0",
-            .hash = "tokamak-2.0.0-FbnSeSiIBgAAw-JgoTQ0PYervTy0FLSXFDGxN3G4EFAL",
+            .url = "git+https://github.com/cztomsik/tokamak?ref=main#a2024cc5339b0ad6cd339ab5ed3325189aaa5d36",
+            .hash = "tokamak-2.0.0-FbnSebK8BgAWpWkAe-pg-_vlHGWmrCQNzZ2maR0n3mOC",
         },
     },
 
